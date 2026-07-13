@@ -12,15 +12,28 @@ info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-# --- Check prerequisites ---
-command -v docker >/dev/null 2>&1 || error "Docker is not installed. Please install Docker first."
+# --- Check prerequisites & auto-install Docker ---
+if ! command -v docker >/dev/null 2>&1; then
+    info "Docker not found. Installing Docker..."
+    curl -fsSL https://get.docker.com | sh
+    sudo systemctl start docker
+    sudo systemctl enable docker
+    # Add current user to docker group
+    if ! groups | grep -q docker; then
+        sudo usermod -aG docker "$USER"
+        warn "Added $USER to docker group. If permission errors occur, re-login or run: newgrp docker"
+    fi
+    info "Docker installed successfully."
+fi
 
 if docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
 elif command -v docker-compose >/dev/null 2>&1; then
     COMPOSE="docker-compose"
 else
-    error "Docker Compose is not available. Please install Docker Compose."
+    info "Docker Compose not found. Installing Docker Compose plugin..."
+    sudo apt-get update -qq && sudo apt-get install -y -qq docker-compose-plugin
+    COMPOSE="docker compose"
 fi
 
 # --- Ensure .env exists ---
