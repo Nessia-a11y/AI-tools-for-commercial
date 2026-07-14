@@ -331,6 +331,84 @@ async def index():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
+# --- File Upload (Chat) ---
+
+UPLOAD_DIR = Path(__file__).parent / "data" / "uploads"
+
+
+@app.post("/api/upload")
+async def upload_file(request: Request, file: UploadFile = File(...)):
+    """Upload a file for translation or other processing."""
+    _require_auth(request)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    filename = file.filename or "upload"
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(400, "Invalid filename")
+
+    content = await file.read()
+    safe_name = filename
+    (UPLOAD_DIR / safe_name).write_bytes(content)
+
+    return {"status": "ok", "filename": safe_name, "size": len(content)}
+
+
+@app.post("/api/translate")
+async def translate_file(request: Request, filename: str = Form(...), target_language: str = Form(...), translations_json: str = Form(...)):
+    """Apply translations to an uploaded file and return the translated version."""
+    _require_auth(request)
+
+    file_path = UPLOAD_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(404, "File not found. Please upload it first.")
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(400, "Invalid filename")
+
+    try:
+        translations = json.loads(translations_json)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid translations_json")
+
+    ext = file_path.suffix.lower()
+    output_dir = Path(__file__).parent / "data" / "translations" / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_name = f"{target_language}-{filename}"
+    output_path = output_dir / output_name
+
+    if ext == ".pptx":
+        skill_translate.translate_pptx(file_path, translations, output_path)
+    elif ext == ".docx":
+        skill_translate.translate_docx(file_path, translations, output_path)
+    elif ext == ".pdf":
+        skill_translate.build_translated_pdf(file_path, translations, output_path)
+        if not output_path.exists():
+            output_path = output_path.with_suffix(".txt")
+            output_name = output_name.replace(".pdf", ".txt")
+    else:
+        raise HTTPException(400, f"Unsupported format: {ext}")
+
+    if not output_path.exists():
+        raise HTTPException(500, "Translation output failed")
+
+    return {"status": "ok", "download_url": f"/api/download/translated/{output_name}"}
+
+
+@app.get("/api/download/translated/{filename}")
+async def download_translated(filename: str, request: Request):
+    """Download a translated file."""
+    _require_auth(request)
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(400, "Invalid filename")
+    output_dir = Path(__file__).parent / "data" / "translations" / "output"
+    path = (output_dir / filename).resolve()
+    if not path.is_relative_to(output_dir.resolve()):
+        raise HTTPException(400, "Invalid path")
+    if not path.exists() or not path.is_file():
+        raise HTTPException(404, "File not found")
+    return FileResponse(path, filename=filename)
+
+
 # --- Download APIs ---
 
 @app.get("/api/download/datasheet/{filename}")
@@ -465,7 +543,7 @@ async def admin_list_external_demos(token: str = Query(...)):
     return {"files": skill_external_demos.list_all_files()}
 
 
-# Admin: SKU Rules (Skill 4)
+# Admin: SKU Rules (Skill 4) — structured data
 @app.post("/admin/sku")
 async def admin_add_sku(
     product: str = Form(...),
@@ -483,13 +561,35 @@ async def admin_add_sku(
     return {"status": "ok", "result": result}
 
 
+# Admin: SKU file upload (doc/slide/PDF)
+@app.post("/admin/sku/upload")
+async def admin_upload_sku_file(
+    file: UploadFile = File(...),
+    product: str = Form(...),
+    description: str = Form(""),
+    token: str = Form(...),
+):
+    _check_admin(token)
+    content = await file.read()
+    entry = skill_sku.add_sku_file(file.filename, content, product, description)
+    return {"status": "ok", "file": {"original_name": entry["original_name"], "product": entry["product"]}}
+
+
 @app.get("/admin/sku")
 async def admin_list_sku(token: str = Query(...)):
     _check_admin(token)
-    return {"products": skill_sku.list_products()}
+    return {"products": skill_sku.list_products(), "files": skill_sku.list_files()}
 
 
-# Admin: TechDocs (Skill 5)
+@app.delete("/admin/sku/file/{stored_name}")
+async def admin_remove_sku_file(stored_name: str, token: str = Query(...)):
+    _check_admin(token)
+    if not skill_sku.remove_file(stored_name):
+        raise HTTPException(404, "File not found")
+    return {"status": "deleted"}
+
+
+# Admin: TechDocs (Skill 5) — text entry
 @app.post("/admin/techdocs")
 async def admin_add_techdoc(
     title: str = Form(...),
@@ -502,6 +602,35 @@ async def admin_add_techdoc(
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     entry = skill_techdocs.add_internal_doc(title, content, product, tag_list)
     return {"status": "ok", "entry": {"title": entry["title"], "product": entry["product"]}}
+
+
+# Admin: TechDocs file upload (datasheet/doc/PDF)
+@app.post("/admin/techdocs/upload")
+async def admin_upload_techdoc_file(
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    product: str = Form(...),
+    description: str = Form(""),
+    token: str = Form(...),
+):
+    _check_admin(token)
+    content = await file.read()
+    entry = skill_techdocs.add_techdoc_file(file.filename, content, title, product, description)
+    return {"status": "ok", "file": {"title": entry["title"], "product": entry["product"]}}
+
+
+@app.get("/admin/techdocs/files")
+async def admin_list_techdoc_files(token: str = Query(...)):
+    _check_admin(token)
+    return {"files": skill_techdocs.list_techdoc_files()}
+
+
+@app.delete("/admin/techdocs/file/{stored_name}")
+async def admin_remove_techdoc_file(stored_name: str, token: str = Query(...)):
+    _check_admin(token)
+    if not skill_techdocs.remove_techdoc_file(stored_name):
+        raise HTTPException(404, "File not found")
+    return {"status": "deleted"}
 
 
 @app.delete("/admin/techdocs/{title}")

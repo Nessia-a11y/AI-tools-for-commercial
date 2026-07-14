@@ -52,6 +52,7 @@
   .auth-bar { margin-bottom: 20px; display: flex; align-items: center; gap: 12px; }
   .auth-bar label { font-size: 13px; color: #8a94a6; }
   .auth-bar input { padding: 8px 12px; border-radius: 6px; border: 1px solid #2a2f3e; background: #0f1419; color: #e6e6e6; font-size: 13px; width: 200px; }
+  .section-divider { border-top: 1px solid #2a2f3e; margin: 16px 0; padding-top: 16px; }
 </style>
 </head>
 <body>
@@ -72,10 +73,13 @@
   </div>
 
   <div id="admin-panel" style="display:none">
+    <div class="auth-bar"><label>管理令牌（技能API）：</label><input id="token" type="password" placeholder="输入令牌" /></div>
+
     <div class="tabs">
       <div class="tab active" data-panel="domains">域名管理</div>
       <div class="tab" data-panel="users">用户管理</div>
       <div class="tab" data-panel="activity">登录记录</div>
+      <div class="tab" data-panel="datasheets">Datasheet</div>
       <div class="tab" data-panel="internal">内部演示</div>
       <div class="tab" data-panel="external">外部演示</div>
       <div class="tab" data-panel="sku">SKU 规则</div>
@@ -116,10 +120,30 @@
       </div>
     </div>
 
+    <!-- Datasheets Panel -->
+    <div id="panel-datasheets" class="panel">
+      <div class="card">
+        <h3>上传 Datasheet（PDF）</h3>
+        <p style="font-size:12px;color:#8a94a6;margin:0 0 12px;">上传产品 Datasheet 到 RAG 库，用户提问时 Agent 可直接提供下载链接。</p>
+        <div class="form-row">
+          <div class="form-group"><label>标题</label><input id="ds-title" placeholder="Cortex XDR Datasheet" /></div>
+          <div class="form-group"><label>产品</label><input id="ds-product" placeholder="Cortex XDR" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="max-width:120px"><label>语言</label>
+            <select id="ds-lang"><option value="zh">中文</option><option value="en">English</option></select>
+          </div>
+          <div class="form-group"><label>文件（PDF）</label><input id="ds-file" type="file" accept=".pdf" /></div>
+        </div>
+        <button class="btn btn-primary" onclick="uploadDatasheet()">上传</button>
+        <div id="ds-status"></div>
+      </div>
+      <div class="card"><h3>已有 Datasheet</h3><div id="ds-list">加载中...</div></div>
+    </div>
+
     <!-- Internal Demos Panel -->
     <div id="panel-internal" class="panel">
       <div class="card">
-        <div class="auth-bar"><label>管理令牌（技能API）：</label><input id="token" type="password" placeholder="输入令牌" /></div>
         <h3>添加内部演示（G-Drive 链接）</h3>
         <div class="form-row">
           <div class="form-group"><label>标题</label><input id="id-title" placeholder="Cortex XDR 演示 2024" /></div>
@@ -145,7 +169,7 @@
         <div class="form-row">
           <div class="form-group"><label>产品</label><input id="ed-product" placeholder="Prisma Access" /></div>
           <div class="form-group" style="max-width:120px"><label>类型</label>
-            <select id="ed-type"><option value="video">视频</option><option value="slide">幻灯片</option></select>
+            <select id="ed-type"><option value="video">视频</option><option value="slide">幻灯片</option><option value="pdf">PDF</option></select>
           </div>
         </div>
         <div class="form-row">
@@ -161,7 +185,23 @@
     <!-- SKU Panel -->
     <div id="panel-sku" class="panel">
       <div class="card">
-        <h3>添加 SKU 信息</h3>
+        <h3>上传 SKU 文档（Doc / Slide / PDF）</h3>
+        <p style="font-size:12px;color:#8a94a6;margin:0 0 12px;">上传包含 SKU 规则的文档，Agent 会根据用户提问自动从文档中提取相关内容回复。</p>
+        <div class="form-row">
+          <div class="form-group"><label>产品</label><input id="skuf-product" placeholder="Prisma Access" /></div>
+          <div class="form-group"><label>描述</label><input id="skuf-desc" placeholder="Prisma Access 许可计算规则" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>文件（.docx / .pptx / .pdf / .txt）</label><input id="skuf-file" type="file" accept=".docx,.pptx,.pdf,.txt,.md,.csv" /></div>
+        </div>
+        <button class="btn btn-primary" onclick="uploadSkuFile()">上传</button>
+        <div id="skuf-status"></div>
+      </div>
+      <div class="card"><h3>已上传 SKU 文档</h3><div id="skuf-list">加载中...</div></div>
+
+      <div class="card">
+        <div class="section-divider"></div>
+        <h3>手动添加 SKU 数据（结构化）</h3>
         <div class="form-row">
           <div class="form-group"><label>产品</label><input id="sku-product" placeholder="Prisma Access" /></div>
         </div>
@@ -178,13 +218,30 @@
         <button class="btn btn-primary" onclick="addSku()">添加/更新</button>
         <div id="sku-status"></div>
       </div>
-      <div class="card"><h3>已有 SKU 产品</h3><div id="sku-list">加载中...</div></div>
+      <div class="card"><h3>已有 SKU 产品（结构化）</h3><div id="sku-list">加载中...</div></div>
     </div>
 
     <!-- TechDocs Panel -->
     <div id="panel-techdocs" class="panel">
       <div class="card">
-        <h3>添加内部部署文档</h3>
+        <h3>上传技术文档（Datasheet / Doc / PDF）</h3>
+        <p style="font-size:12px;color:#8a94a6;margin:0 0 12px;">上传技术文档到 RAG 库，Agent 查询技术问题时会搜索这些文档。</p>
+        <div class="form-row">
+          <div class="form-group"><label>标题</label><input id="tdf-title" placeholder="Prisma Access 部署架构" /></div>
+          <div class="form-group"><label>产品</label><input id="tdf-product" placeholder="prisma-access" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>描述</label><input id="tdf-desc" placeholder="可选" /></div>
+          <div class="form-group"><label>文件</label><input id="tdf-file" type="file" accept=".pdf,.docx,.pptx,.txt,.md" /></div>
+        </div>
+        <button class="btn btn-primary" onclick="uploadTechdocFile()">上传</button>
+        <div id="tdf-status"></div>
+      </div>
+      <div class="card"><h3>已上传技术文档</h3><div id="tdf-list">加载中...</div></div>
+
+      <div class="card">
+        <div class="section-divider"></div>
+        <h3>手动添加内部文档（文本）</h3>
         <div class="form-row">
           <div class="form-group"><label>标题</label><input id="td-title" placeholder="Prisma Access GlobalProtect 部署指南" /></div>
           <div class="form-group"><label>产品</label><input id="td-product" placeholder="prisma-access" /></div>
@@ -203,7 +260,7 @@
 </div>
 
 <script>
-const T = () => document.getElementById('token') ? document.getElementById('token').value : '';
+const T = () => document.getElementById('token').value;
 
 async function init() {
   try {
@@ -346,6 +403,39 @@ async function loadActivity() {
   }
 }
 
+// --- Datasheets ---
+async function uploadDatasheet() {
+  const file = document.getElementById('ds-file').files[0];
+  if (!file) { status('ds-status', '请选择文件', false); return; }
+  const form = new FormData();
+  form.append('token', T());
+  form.append('file', file);
+  form.append('title', document.getElementById('ds-title').value);
+  form.append('language', document.getElementById('ds-lang').value);
+  form.append('product', document.getElementById('ds-product').value);
+  const res = await fetch('/admin/datasheets', { method: 'POST', body: form });
+  const d = await res.json();
+  status('ds-status', res.ok ? '上传成功！' : d.detail, res.ok);
+  if (res.ok) loadDatasheets();
+}
+
+async function loadDatasheets() {
+  const res = await fetch('/admin/datasheets?token=' + encodeURIComponent(T()));
+  if (!res.ok) { document.getElementById('ds-list').textContent = '请输入令牌查看'; return; }
+  const d = await res.json();
+  const el = document.getElementById('ds-list');
+  if (!d.datasheets.length) { el.textContent = '暂无 Datasheet。'; return; }
+  el.innerHTML = d.datasheets.map(x => {
+    const lang = x.language === 'zh' || x.language === 'zh-CN' ? '中文' : 'English';
+    return `<div class="list-item"><span>${x.title} (${lang}) — ${x.product}</span><span class="del" onclick="delDatasheet('${encodeURIComponent(x.title)}')">删除</span></div>`;
+  }).join('');
+}
+
+async function delDatasheet(title) {
+  await fetch('/admin/datasheets/' + title + '?token=' + encodeURIComponent(T()), { method: 'DELETE' });
+  loadDatasheets();
+}
+
 // --- Internal Demos ---
 async function addInternalDemo() {
   const form = new FormData();
@@ -405,7 +495,37 @@ async function delExternal(name) {
   loadExternalDemos();
 }
 
-// --- SKU ---
+// --- SKU File Upload ---
+async function uploadSkuFile() {
+  const file = document.getElementById('skuf-file').files[0];
+  if (!file) { status('skuf-status', '请选择文件', false); return; }
+  const form = new FormData();
+  form.append('token', T());
+  form.append('file', file);
+  form.append('product', document.getElementById('skuf-product').value);
+  form.append('description', document.getElementById('skuf-desc').value);
+  const res = await fetch('/admin/sku/upload', { method: 'POST', body: form });
+  const d = await res.json();
+  status('skuf-status', res.ok ? '上传成功！' : d.detail, res.ok);
+  if (res.ok) loadSkuFiles();
+}
+
+async function loadSkuFiles() {
+  const res = await fetch('/admin/sku?token=' + encodeURIComponent(T()));
+  if (!res.ok) { document.getElementById('skuf-list').textContent = '请输入令牌查看'; return; }
+  const d = await res.json();
+  const el = document.getElementById('skuf-list');
+  const files = d.files || [];
+  if (!files.length) { el.textContent = '暂无文档。'; return; }
+  el.innerHTML = files.map(x => `<div class="list-item"><span>${x.original_name} — ${x.product} <span style="color:#8a94a6;font-size:11px">${x.description || ''}</span></span><span class="del" onclick="delSkuFile('${x.stored_name}')">删除</span></div>`).join('');
+}
+
+async function delSkuFile(name) {
+  await fetch('/admin/sku/file/' + encodeURIComponent(name) + '?token=' + encodeURIComponent(T()), { method: 'DELETE' });
+  loadSkuFiles();
+}
+
+// --- SKU Structured ---
 async function addSku() {
   const form = new FormData();
   form.append('token', T());
@@ -423,10 +543,42 @@ async function loadSkus() {
   if (!res.ok) { document.getElementById('sku-list').textContent = '请输入令牌查看'; return; }
   const d = await res.json();
   const el = document.getElementById('sku-list');
-  el.textContent = d.products.length ? d.products.join(', ') : '暂无产品。';
+  const products = d.products || [];
+  el.textContent = products.length ? products.join(', ') : '暂无产品。';
 }
 
-// --- TechDocs ---
+// --- TechDocs File Upload ---
+async function uploadTechdocFile() {
+  const file = document.getElementById('tdf-file').files[0];
+  if (!file) { status('tdf-status', '请选择文件', false); return; }
+  const form = new FormData();
+  form.append('token', T());
+  form.append('file', file);
+  form.append('title', document.getElementById('tdf-title').value);
+  form.append('product', document.getElementById('tdf-product').value);
+  form.append('description', document.getElementById('tdf-desc').value);
+  const res = await fetch('/admin/techdocs/upload', { method: 'POST', body: form });
+  const d = await res.json();
+  status('tdf-status', res.ok ? '上传成功！' : d.detail, res.ok);
+  if (res.ok) loadTechdocFiles();
+}
+
+async function loadTechdocFiles() {
+  const res = await fetch('/admin/techdocs/files?token=' + encodeURIComponent(T()));
+  if (!res.ok) { document.getElementById('tdf-list').textContent = '请输入令牌查看'; return; }
+  const d = await res.json();
+  const el = document.getElementById('tdf-list');
+  const files = d.files || [];
+  if (!files.length) { el.textContent = '暂无文档。'; return; }
+  el.innerHTML = files.map(x => `<div class="list-item"><span>${x.title} (${x.original_name}) — ${x.product}</span><span class="del" onclick="delTechdocFile('${x.stored_name}')">删除</span></div>`).join('');
+}
+
+async function delTechdocFile(name) {
+  await fetch('/admin/techdocs/file/' + encodeURIComponent(name) + '?token=' + encodeURIComponent(T()), { method: 'DELETE' });
+  loadTechdocFiles();
+}
+
+// --- TechDocs Text ---
 async function addTechdoc() {
   const form = new FormData();
   form.append('token', T());

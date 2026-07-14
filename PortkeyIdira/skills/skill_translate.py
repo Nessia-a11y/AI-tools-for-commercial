@@ -1,41 +1,44 @@
-"""Skill 7: Slide/PPT Translation
+"""Skill 7: Document Translation
 
-使用 AI 对 slide 和 PPT 文件中的文本内容进行语言翻译。
-支持上传的演示文件翻译（中英互译）。
+对 PPTX/DOCX/PDF 文件进行翻译，维持原始排版和字体。
+支持中/英/日/韩互译。
 """
 
 import json
 import time
+import hashlib
+import copy
 from pathlib import Path
+from typing import Optional
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "translations"
-MANIFEST_PATH = DATA_DIR / "manifest.json"
+OUTPUT_DIR = DATA_DIR / "output"
 
 TOOL_DEFINITION = {
     "type": "function",
     "function": {
         "name": "translate_slide",
         "description": (
-            "Translate slide/PPT content between languages. "
-            "This tool extracts text from uploaded presentation files and translates them. "
-            "Supports Chinese-English bidirectional translation. "
-            "Use this when a user asks to translate a presentation, slide deck, or PPT file."
+            "Translate slide/PPT/document content between languages. "
+            "Supports PPTX, DOCX, and PDF files. Maintains original formatting and fonts. "
+            "Use this when a user asks to translate a presentation, slide deck, or document. "
+            "The user should upload the file through the chat upload feature first."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "source_file": {
                     "type": "string",
-                    "description": "The filename or title of the slide/PPT to translate (must exist in external demos or datasheets)",
+                    "description": "The filename of the uploaded file to translate",
                 },
                 "target_language": {
                     "type": "string",
                     "enum": ["zh", "en", "ja", "ko"],
-                    "description": "Target language code: 'zh' for Chinese, 'en' for English, 'ja' for Japanese, 'ko' for Korean",
+                    "description": "Target language: 'zh' Chinese, 'en' English, 'ja' Japanese, 'ko' Korean",
                 },
                 "content_to_translate": {
                     "type": "string",
-                    "description": "If the file cannot be parsed directly, paste the text content here for translation",
+                    "description": "Direct text content to translate (if no file uploaded)",
                 },
             },
             "required": ["target_language"],
@@ -51,136 +54,273 @@ LANG_NAMES = {
 }
 
 
-def _load_manifest() -> dict:
+def _ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if MANIFEST_PATH.exists():
-        return json.loads(MANIFEST_PATH.read_text())
-    return {"translations": []}
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _save_manifest(manifest: dict):
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+def translate_pptx(file_path: Path, translations: dict[str, str], output_path: Path):
+    """Translate PPTX file maintaining formatting. translations = {original: translated}"""
+    from pptx import Presentation
+    from pptx.util import Pt
+
+    prs = Presentation(str(file_path))
+
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    for run in para.runs:
+                        original_text = run.text.strip()
+                        if original_text and original_text in translations:
+                            run.text = translations[original_text]
+            if shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        for para in cell.text_frame.paragraphs:
+                            for run in para.runs:
+                                original_text = run.text.strip()
+                                if original_text and original_text in translations:
+                                    run.text = translations[original_text]
+
+    prs.save(str(output_path))
 
 
-def _find_source_file(source_file: str) -> dict | None:
-    """Look up source file in external demos and datasheets."""
-    # Check external demos
-    ext_demos_path = Path(__file__).parent.parent / "data" / "external_demos" / "index.json"
-    if ext_demos_path.exists():
-        index = json.loads(ext_demos_path.read_text())
-        for entry in index.get("files", []):
-            if (source_file.lower() in entry.get("original_name", "").lower() or
-                    source_file.lower() in entry.get("stored_name", "").lower()):
-                return {
-                    "title": entry.get("original_name", ""),
-                    "path": str(Path(__file__).parent.parent / "data" / "external_demos" / entry["stored_name"]),
-                    "type": "external_demo",
-                }
+def translate_docx(file_path: Path, translations: dict[str, str], output_path: Path):
+    """Translate DOCX file maintaining formatting."""
+    from docx import Document
 
-    # Check datasheets
-    ds_manifest_path = Path(__file__).parent.parent / "data" / "datasheets" / "manifest.json"
-    if ds_manifest_path.exists():
-        ds_manifest = json.loads(ds_manifest_path.read_text())
-        for key, entry in ds_manifest.get("datasheets", {}).items():
-            if (source_file.lower() in entry.get("title", "").lower() or
-                    source_file.lower() in entry.get("filename", "").lower()):
-                return {
-                    "title": entry.get("title", ""),
-                    "path": str(Path(__file__).parent.parent / "data" / "datasheets" / entry["filename"]),
-                    "type": "datasheet",
-                }
+    doc = Document(str(file_path))
 
-    return None
+    for para in doc.paragraphs:
+        for run in para.runs:
+            original_text = run.text.strip()
+            if original_text and original_text in translations:
+                run.text = translations[original_text]
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        original_text = run.text.strip()
+                        if original_text and original_text in translations:
+                            run.text = translations[original_text]
+
+    doc.save(str(output_path))
+
+
+def extract_texts_pptx(file_path: Path) -> list[str]:
+    """Extract all translatable text segments from PPTX."""
+    from pptx import Presentation
+
+    texts = []
+    prs = Presentation(str(file_path))
+
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    for run in para.runs:
+                        text = run.text.strip()
+                        if text and len(text) > 0:
+                            texts.append(text)
+            if shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        for para in cell.text_frame.paragraphs:
+                            for run in para.runs:
+                                text = run.text.strip()
+                                if text and len(text) > 0:
+                                    texts.append(text)
+
+    return list(dict.fromkeys(texts))
+
+
+def extract_texts_docx(file_path: Path) -> list[str]:
+    """Extract all translatable text segments from DOCX."""
+    from docx import Document
+
+    texts = []
+    doc = Document(str(file_path))
+
+    for para in doc.paragraphs:
+        for run in para.runs:
+            text = run.text.strip()
+            if text:
+                texts.append(text)
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        text = run.text.strip()
+                        if text:
+                            texts.append(text)
+
+    return list(dict.fromkeys(texts))
+
+
+def extract_texts_pdf(file_path: Path) -> list[str]:
+    """Extract text from PDF (page by page)."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(str(file_path))
+        texts = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                for line in text.split("\n"):
+                    line = line.strip()
+                    if line:
+                        texts.append(line)
+        return list(dict.fromkeys(texts))
+    except Exception:
+        return []
+
+
+def build_translated_pdf(file_path: Path, translations: dict[str, str], output_path: Path):
+    """Create translated PDF. Best-effort: extracts text and creates new PDF with translations."""
+    try:
+        from pypdf import PdfReader
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.units import inch
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        # Try to register a CJK font
+        try:
+            pdfmetrics.registerFont(TTFont('NotoSansCJK', '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'))
+            font_name = 'NotoSansCJK'
+        except Exception:
+            try:
+                pdfmetrics.registerFont(TTFont('NotoSans', '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf'))
+                font_name = 'NotoSans'
+            except Exception:
+                font_name = 'Helvetica'
+
+        reader = PdfReader(str(file_path))
+        c = canvas.Canvas(str(output_path), pagesize=A4)
+        width, height = A4
+
+        for page in reader.pages:
+            text = page.extract_text()
+            if not text:
+                continue
+
+            c.setFont(font_name, 10)
+            y = height - 50
+            for line in text.split("\n"):
+                line = line.strip()
+                if not line:
+                    y -= 14
+                    continue
+
+                translated_line = translations.get(line, line)
+                if y < 50:
+                    c.showPage()
+                    c.setFont(font_name, 10)
+                    y = height - 50
+
+                c.drawString(40, y, translated_line)
+                y -= 14
+
+            c.showPage()
+
+        c.save()
+    except ImportError:
+        # Fallback: write translated text as plain text
+        lines = []
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(file_path))
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    for line in text.split("\n"):
+                        line = line.strip()
+                        if line:
+                            translated = translations.get(line, line)
+                            lines.append(translated)
+                    lines.append("---")
+        except Exception:
+            lines = ["PDF translation failed - missing dependencies"]
+
+        output_txt = output_path.with_suffix(".txt")
+        output_txt.write_text("\n".join(lines), encoding="utf-8")
 
 
 async def handle(arguments: dict) -> str:
-    """Execute the translation skill."""
+    """Execute the translation skill — returns instructions for the agent."""
     source_file = arguments.get("source_file", "").strip()
     target_language = arguments.get("target_language", "zh").strip()
     content_to_translate = arguments.get("content_to_translate", "").strip()
 
     target_lang_name = LANG_NAMES.get(target_language, target_language)
 
-    # If direct content is provided, return translation instruction
     if content_to_translate:
-        manifest = _load_manifest()
-        translation_record = {
-            "source": source_file or "direct_input",
-            "target_language": target_language,
-            "input_length": len(content_to_translate),
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        manifest["translations"].append(translation_record)
-        _save_manifest(manifest)
-
         return (
             f"TRANSLATION_REQUEST:\n"
             f"Target language: {target_lang_name}\n"
-            f"Source content ({len(content_to_translate)} characters):\n\n"
+            f"Content ({len(content_to_translate)} chars):\n\n"
             f"{content_to_translate}\n\n"
             f"---\n"
-            f"Please translate the above content to {target_lang_name}. "
-            f"Maintain the original formatting, bullet points, and structure. "
-            f"For technical terms (product names, protocols, standards), keep them in English with {target_lang_name} explanation in parentheses where helpful."
+            f"Translate the above to {target_lang_name}. "
+            f"Keep original structure. Technical terms stay in English with {target_lang_name} notes in parentheses."
         )
 
-    # If source file is specified, try to locate it
     if source_file:
-        file_info = _find_source_file(source_file)
-        if file_info:
-            file_path = Path(file_info["path"])
-            if file_path.exists():
-                ext = file_path.suffix.lower()
+        # Check uploaded files
+        upload_dir = Path(__file__).parent.parent / "data" / "uploads"
+        file_path = upload_dir / source_file
+        if not file_path.exists():
+            # Search by partial name
+            if upload_dir.exists():
+                for f in upload_dir.iterdir():
+                    if source_file.lower() in f.name.lower():
+                        file_path = f
+                        break
 
-                # For text-extractable formats
-                if ext in (".txt", ".md", ".json"):
-                    text_content = file_path.read_text(errors="ignore")[:10000]
-                    return (
-                        f"Found file: {file_info['title']}\n"
-                        f"Type: {file_info['type']}\n"
-                        f"Target language: {target_lang_name}\n\n"
-                        f"TRANSLATION_REQUEST:\n"
-                        f"Please translate the following content to {target_lang_name}:\n\n"
-                        f"{text_content}"
-                    )
+        if file_path.exists():
+            ext = file_path.suffix.lower()
+            texts = []
 
-                # For binary formats (PDF, PPTX) - instruct agent to handle
-                if ext in (".pdf", ".pptx", ".ppt"):
-                    return (
-                        f"Found file: {file_info['title']}\n"
-                        f"Type: {ext.upper()} ({file_info['type']})\n"
-                        f"Path: {file_info['path']}\n"
-                        f"Target language: {target_lang_name}\n\n"
-                        f"This is a binary file ({ext}). To translate:\n"
-                        f"1. The file is available at: /api/download/{'datasheet' if file_info['type'] == 'datasheet' else 'external'}/{file_path.name}\n"
-                        f"2. Please ask the user to provide the text content from the slides they want translated,\n"
-                        f"   or provide a summary/key points translation based on the file title and context.\n\n"
-                        f"File title suggests this is about: {file_info['title']}\n"
-                        f"Please provide a translated summary of key points about this topic in {target_lang_name}."
-                    )
-
-                return (
-                    f"Found file: {file_info['title']}\n"
-                    f"Format: {ext}\n"
-                    f"Cannot directly extract text from this format. "
-                    f"Please ask the user to paste the text content they want translated."
-                )
+            if ext == ".pptx":
+                texts = extract_texts_pptx(file_path)
+            elif ext == ".docx":
+                texts = extract_texts_docx(file_path)
+            elif ext == ".pdf":
+                texts = extract_texts_pdf(file_path)
             else:
-                return f"File record found but file is missing on disk: {file_info['title']}"
+                return f"Unsupported file format: {ext}. Supported: .pptx, .docx, .pdf"
+
+            if not texts:
+                return f"Could not extract text from {source_file}. The file may be empty or in an unsupported format."
+
+            # Return text for agent to translate
+            text_block = "\n---SEGMENT---\n".join(texts[:200])
+            return (
+                f"FILE_TRANSLATION_REQUEST:\n"
+                f"File: {file_path.name}\n"
+                f"Format: {ext}\n"
+                f"Target language: {target_lang_name}\n"
+                f"Segments to translate: {len(texts[:200])}\n\n"
+                f"IMPORTANT: Translate each segment below to {target_lang_name}. "
+                f"Return the result as a JSON object with original text as keys and translations as values. "
+                f"Keep formatting markers (bullets, numbering) intact. "
+                f"Technical terms (product names, protocols) stay in English.\n\n"
+                f"SEGMENTS:\n{text_block}"
+            )
 
         return (
-            f"Could not find file '{source_file}' in the library.\n"
-            f"Available sources to search:\n"
-            f"- External demos (uploaded presentations)\n"
-            f"- Datasheets (uploaded PDFs)\n\n"
-            f"Please ask the user to:\n"
-            f"1. Provide the exact filename, or\n"
-            f"2. Paste the text content directly for translation"
+            f"File '{source_file}' not found. "
+            f"Please ask the user to upload the file first using the upload button in the chat interface."
         )
 
     return (
-        f"Please specify what to translate:\n"
-        f"- Provide a 'source_file' name to translate an existing file, or\n"
-        f"- Provide 'content_to_translate' with the text to translate\n"
-        f"Target language: {target_lang_name}"
+        f"No file or content specified for translation.\n"
+        f"Please ask the user to upload a file (.pptx, .docx, or .pdf) "
+        f"or provide text content directly."
     )

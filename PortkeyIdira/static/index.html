@@ -71,17 +71,30 @@
   #chat-form {
     display: flex; padding: 16px 24px; gap: 12px;
     background: #1a1f2e; border-top: 1px solid #2a2f3e; max-width: 900px; width: 100%; margin: 0 auto;
+    align-items: center;
   }
-  #chat-form input {
+  #chat-form input[type="text"] {
     flex: 1; padding: 12px 16px; border-radius: 8px;
     border: 1px solid #2a2f3e; background: #0f1419; color: #e6e6e6; font-size: 14px;
   }
-  #chat-form input:focus { outline: none; border-color: #f04e23; }
+  #chat-form input[type="text"]:focus { outline: none; border-color: #f04e23; }
   #chat-form button {
     padding: 12px 20px; border-radius: 8px; border: none;
     background: #f04e23; color: white; font-weight: 600; cursor: pointer;
   }
   #chat-form button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .upload-btn {
+    padding: 10px 12px; border-radius: 8px; border: 1px solid #2a2f3e;
+    background: #0f1419; color: #8a94a6; cursor: pointer; font-size: 16px; display: flex; align-items: center;
+  }
+  .upload-btn:hover { border-color: #f04e23; color: #f04e23; }
+  .upload-btn input { display: none; }
+  .file-badge {
+    font-size: 12px; background: #1a3a2a; color: #4caf50; padding: 4px 8px; border-radius: 4px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .file-badge .remove { cursor: pointer; color: #f44336; }
+  .download-link { color: #f04e23; text-decoration: underline; cursor: pointer; }
   .thinking { font-style: italic; color: #8a94a6; }
 </style>
 </head>
@@ -138,8 +151,13 @@
     <nav id="admin-nav" style="display:none"><a href="/static/admin.html">管理后台</a></nav>
   </header>
   <div id="messages"></div>
+  <div id="file-preview" style="display:none; padding: 8px 24px; max-width: 900px; margin: 0 auto; width: 100%;"></div>
   <form id="chat-form">
-    <input id="input" type="text" placeholder="询问 Cortex、Strata、Prisma SASE、Prisma AIRS、Idira 相关问题..." autocomplete="off" required />
+    <label class="upload-btn" title="上传文件翻译 (PPTX/DOCX/PDF)">
+      📎
+      <input id="file-input" type="file" accept=".pptx,.docx,.pdf,.txt" />
+    </label>
+    <input id="input" type="text" placeholder="询问 Cortex、Strata、Prisma SASE、Prisma AIRS、Idira 相关问题..." autocomplete="off" />
     <button id="send" type="submit">发送</button>
   </form>
 </div>
@@ -266,7 +284,41 @@ const form = document.getElementById('chat-form');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const userTypeSelect = document.getElementById('user-type');
+const fileInput = document.getElementById('file-input');
+const filePreview = document.getElementById('file-preview');
 const history = [];
+let uploadedFile = null;
+
+// File upload handling
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  filePreview.style.display = '';
+  filePreview.innerHTML = `<span class="file-badge">📄 ${file.name} (上传中...)</span>`;
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '上传失败');
+
+    uploadedFile = data.filename;
+    filePreview.innerHTML = `<span class="file-badge">📄 ${data.filename} (${(data.size / 1024).toFixed(0)} KB) <span class="remove" onclick="removeFile()">✕</span></span>`;
+  } catch (err) {
+    filePreview.innerHTML = `<span style="color:#f44336;font-size:13px;">上传失败: ${err.message}</span>`;
+    uploadedFile = null;
+  }
+  fileInput.value = '';
+});
+
+function removeFile() {
+  uploadedFile = null;
+  filePreview.style.display = 'none';
+  filePreview.innerHTML = '';
+}
 
 function addMessage(role, content, tools) {
   const div = document.createElement('div');
@@ -276,7 +328,7 @@ function addMessage(role, content, tools) {
   roleLabel.textContent = role === 'user' ? '你' : '助手';
   div.appendChild(roleLabel);
   const body = document.createElement('div');
-  body.textContent = content;
+  body.innerHTML = formatContent(content);
   div.appendChild(body);
   if (tools && tools.length) {
     const t = document.createElement('div');
@@ -289,10 +341,26 @@ function addMessage(role, content, tools) {
   return div;
 }
 
+function formatContent(text) {
+  // Convert download links to clickable links
+  return text.replace(/\/api\/download\/[^\s)]+/g, url => {
+    const name = url.split('/').pop();
+    return `<a class="download-link" href="${url}" target="_blank" download>${name}</a>`;
+  });
+}
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const text = input.value.trim();
-  if (!text) return;
+  let text = input.value.trim();
+  if (!text && !uploadedFile) return;
+
+  // If file is attached, mention it in the message
+  if (uploadedFile) {
+    const fileNote = `[已上传文件: ${uploadedFile}]`;
+    text = text ? `${text}\n${fileNote}` : `请翻译这个文件: ${uploadedFile}`;
+    removeFile();
+  }
+
   input.value = '';
   sendBtn.disabled = true;
 
@@ -312,7 +380,7 @@ form.addEventListener('submit', async (e) => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || '错误');
 
-    pending.querySelector('div:nth-child(2)').textContent = data.reply;
+    pending.querySelector('div:nth-child(2)').innerHTML = formatContent(data.reply);
     if (data.tool_calls && data.tool_calls.length) {
       const t = document.createElement('div');
       t.className = 'tools';
