@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from mcp_client import MCPManager
 from system_prompt import SYSTEM_PROMPT
-from skills import skill_datasheet, skill_internal_demos, skill_external_demos, skill_sku, skill_techdocs, skill_mcp_reserved
+from skills import skill_datasheet, skill_internal_demos, skill_external_demos, skill_sku, skill_techdocs, skill_mcp_reserved, skill_translate
 import auth
 
 load_dotenv()
@@ -47,6 +47,7 @@ SKILLS = {
     "query_external_demos": skill_external_demos,
     "query_sku": skill_sku,
     "query_techdocs": skill_techdocs,
+    "translate_slide": skill_translate,
     "mcp_extension": skill_mcp_reserved,
 }
 
@@ -372,6 +373,35 @@ def _require_admin(request: Request):
     if not auth.is_admin(email):
         raise HTTPException(403, "Admin access required")
     return email
+
+
+# Admin: Datasheets (Skill 1)
+@app.post("/admin/datasheets")
+async def admin_add_datasheet(
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    language: str = Form("en"),
+    product: str = Form(...),
+    token: str = Form(...),
+):
+    _check_admin(token)
+    content = await file.read()
+    entry = skill_datasheet.add_datasheet(file.filename, content, title, language, product)
+    return {"status": "ok", "entry": entry}
+
+
+@app.get("/admin/datasheets")
+async def admin_list_datasheets(token: str = Query(...)):
+    _check_admin(token)
+    return {"datasheets": skill_datasheet.list_all_datasheets()}
+
+
+@app.delete("/admin/datasheets/{title}")
+async def admin_remove_datasheet(title: str, token: str = Query(...)):
+    _check_admin(token)
+    if not skill_datasheet.remove_datasheet(title):
+        raise HTTPException(404, "Datasheet not found")
+    return {"status": "deleted"}
 
 
 # Admin: Internal Demos (Skill 2)
