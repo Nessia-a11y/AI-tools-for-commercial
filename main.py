@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from mcp_client import MCPManager
 from system_prompt import SYSTEM_PROMPT
-from skills import skill_datasheet, skill_internal_demos, skill_external_demos, skill_sku, skill_techdocs, skill_mcp_reserved, skill_translate
+from skills import skill_datasheet, skill_internal_demos, skill_external_demos, skill_sku, skill_techdocs, skill_mcp_reserved, skill_translate, skill_context7
 import auth
 
 load_dotenv()
@@ -48,6 +48,7 @@ SKILLS = {
     "query_sku": skill_sku,
     "query_techdocs": skill_techdocs,
     "translate_slide": skill_translate,
+    "query_context7": skill_context7,
     "mcp_extension": skill_mcp_reserved,
 }
 
