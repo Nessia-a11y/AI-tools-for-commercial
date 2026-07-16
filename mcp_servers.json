@@ -1,0 +1,12 @@
+{
+  "servers": [
+    {
+      "name": "context7_Idira",
+      "type": "sse",
+      "url": "https://democn.data.aigw.cyberark.cloud/mcp/context7mcpserver",
+      "headers": {
+        "Authorization": "Bearer 53d48153-f5b4-4ae9-8a9d-a9a0042db898"
+      }
+    }
+  ]
+}
